@@ -1,4 +1,4 @@
-# Hardware
+# Aerial Hardware
 
 This document details the hardware configuration of the aerial platform.
 
