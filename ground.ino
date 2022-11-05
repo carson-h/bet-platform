@@ -18,7 +18,7 @@
 RF24 radio(4, 5);  // using GPIO4 for the CE pin, and GPIO5 for the CSN pin
 
 // Let these addresses be used for the pair
-uint8_t address[][6] = { "1Node", "2Node" };
+uint8_t address[][6] = { "GCONT", "ADATA" };
 // It is very helpful to think of an address as a path instead of as
 // an identifying device destination
 

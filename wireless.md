@@ -35,5 +35,18 @@ Three elements of the Status byte are the stability flag, battery indicator, and
 <img src="images/statusbyte.png">
 </center>
 
+## Sizes of Transmission Components
 
-Written by Carson Hall 2022/10/26
+Each data element communicated between the devices has an expected length. These omit the requirement to use a specified length parameter during each transmission.
+
+| Component | Size   | Description
+|-|-|-|
+| IR Image | 64 floats | An 8x8 grid of floats describing the temperature detected.
+| Orientation | 2 floats | Angles in radians of the platform relative to the initialized reference for the forward and horizontal direction.
+| Distance | 1 float | Distance to the ground.
+| Status | 1 byte | Describes the status of the aerial platform
+| Command | 1 byte | Comand provided to the aerial platform
+
+
+Written by Carson Hall 2022/10/26  
+Updated 2022/11/04
