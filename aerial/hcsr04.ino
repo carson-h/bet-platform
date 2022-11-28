@@ -3,13 +3,14 @@
 #include <Wire.h>
 
 #define HC_SR04_DEFAULT_ADDRESS 0x2B
+#define PULSE_TO_DIST 0
 
 void initialize() {
     Wire.begin();
 }
 
 float pulse_to_dist (short pulses) {
-    return 0;
+    return pulses*PULSE_TO_DIST;
 }
 
 short request(int address) {

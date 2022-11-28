@@ -1,5 +1,5 @@
-#define alpha_pitch 0.0
-#define alpha_roll 0.0
+#define alpha_pitch 0.98
+#define alpha_roll 0.98
 
 #define rad2deg 180/PI
 

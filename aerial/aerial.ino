@@ -1,39 +1,71 @@
-/* 
-Aerial Platform Code
-
-TODO Kalman filtering 
-
-*/
-
 #include <SPI.h>
 #include "printf.h"
 #include "RF24.h"
 #include <Wire.h>
 #include <Adafruit_AMG88xx.h>
 #include <Adafruit_LSM6DS3TRC.h>
+#include <Servo.h>
 
 #define DEBUG 1
 
+bool status;
+
+// IR Camera
 Adafruit_AMG88xx amg;
 
 float pixels[AMG88xx_PIXEL_ARRAY_SIZE];
 
+// IMU
 Adafruit_LSM6DS3TRC lsm6ds3trc;
 
-// Instantiate an object for the nRF24L01 transceiver
+float ori[] = {0.0, 0.0}; // Orientation set point
+unsigned long lastIMU;
+
+// Radio
 RF24 radio(7, 8);  // using pin 7 for the CE pin, and pin 8 for the CSN pin
 
-// nRF24 tranciever addresses
 uint8_t address[][6] = { "GCONT", "ADATA" }; // ? DOES AUTOACK NEED DISABLED FOR THE GCONT ADDRESS TO BE USEFUL. WHAT NEEDS TO BE DONE TO KEEP THIS WORKING
-
 char command = 0x00; // Command from ground station
-float ori[] = {0.0, 0.0}; // Orientation set point
 
-bool status;
+// Gimbal Control
+Servo pitchServo; //0-90deg
+Servo rollServo; // 0-115deg
+
+#define PITCH_GIMBAL_GAIN 0.1
+#define ROLL_GIMBAL_GAIN 0.1
+
+#define PITCH_SERVO_LOW 0
+#define PITCH_SERVO_HIGH 90
+
+#define ROLL_SERVO_LOW 0
+#define ROLL_SERVO_HIGH 115
+
+float limits(float value, float low, float high) {
+  if (value < low)
+    return low;
+  else if (value > high)
+    return high;
+  else
+    return value;
+}
 
 int getResponseSize(char command) {
   // status byte + amg8833 + hc sr-04 + lsm6ds3tr-c
-  return 1 + (0b10000000 & 1 != 0)*AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float) + (0b01000000 & 1 != 0)*sizeof(float) + (0b00100000 & 1 != 0)*2*sizeof(float);
+  int length = 1; // status byte
+
+  if (0b10000000 & command) {
+    length += AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float);
+  }
+
+  if (0b01000000 & command) {
+    length += sizeof(float);
+  }
+
+  if (0b00100000 & command) {
+    length += 2*sizeof(float);
+  }
+  //return 1 + (0b10000000 & command != 0)*AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float) + (0b01000000 & command != 0)*sizeof(float) + (0b00100000 & command != 0)*2*sizeof(float);
+  return length;
 }
 
 char measureBattery() {
@@ -65,14 +97,19 @@ void setup() {
   // Configure accelerometer and gyroscope
   lsm6ds3trc.setAccelRange(LSM6DS_ACCEL_RANGE_2_G);
   lsm6ds3trc.setGyroRange(LSM6DS_GYRO_RANGE_250_DPS);
-  lsm6ds3trc.setAccelDataRate(LSM6DS_RATE_12_5_HZ);
-  lsm6ds3trc.setGyroDataRate(LSM6DS_RATE_12_5_HZ);
+  lsm6ds3trc.setAccelDataRate(LSM6DS_RATE_1_66K_HZ);
+  lsm6ds3trc.setGyroDataRate(LSM6DS_RATE_1_66K_HZ);
 
   lsm6ds3trc.configInt1(false, false, true); // accelerometer DRDY on INT1
   lsm6ds3trc.configInt2(false, true, false); // gyro DRDY on INT2
 
+  // Initialize complementary filters for determining orientation from gyro and accel data
+  calibrateIMU(50);
+  initFilters();
+  lastIMU = micros();
+
   // Initialize the transceiver on the SPI bus
-  status = !radio.begin();
+  status = radio.begin();
   if (!status) {
     if (DEBUG) {
       Serial.println(F("Failed to find a valid nRF24L01+."));
@@ -89,10 +126,12 @@ void setup() {
   // TODO Fixed payload size? Is variable width possible? What is the most effective width?
   // save on transmission time by setting the radio to only transmit the
   // number of bytes we need to transmit a float
-  //radio.setPayloadSize(sizeof(payload));  // float datatype occupies 4 bytes
   radio.enableDynamicPayloads();
   radio.openReadingPipe(1, address[0]); // set the RX address of the TX node into a RX pipe
   radio.startListening();
+
+  pitchServo.attach(5);
+  rollServo.attach(6);
 }
 
 void loop() {
@@ -102,7 +141,7 @@ void loop() {
 
     if (DEBUG) {
       Serial.print(F("Received: "));
-      Serial.println(command);  // print the payload's value
+      Serial.println((byte)command);  // print the payload's value
     }
 
     // SORI bit set
@@ -122,8 +161,10 @@ void loop() {
     radio.writeBlocking(r_buf, length, 500); // Load buffers for up to 0.5s
     radio.txStandBy(500); // Retry transmission for up to 0.5s or ACK received
     if (DEBUG) {
-      if (status)
-        Serial.println(r_buf);  // print payload sent
+      if (status) {
+        Serial.print("Handled command with output length: ");
+        Serial.println(length);  // print payload sent
+      }
       else
         Serial.println(F("Transmission failed or timed out"));  // payload was not delivered
     }
@@ -131,10 +172,39 @@ void loop() {
     radio.startListening();
   }
 
+  if (DEBUG && !radio.available()) {
+    int length = getResponseSize(0b11100000);
+    char r_buf[length];
+    handleCommand(0b11100000, r_buf);
+    Serial.print("Handled command with output length: ");
+    Serial.println(length);
+  }
+
   // Gimbaling
 
+  // Get orientation
+  sensors_event_t accel;
+  sensors_event_t gyro;
+  sensors_event_t temp;
+  lsm6ds3trc.getEvent(&accel, &gyro, &temp);
+  unsigned long newIMU = micros();
+  Serial.println(newIMU-lastIMU);
+  updateFilters(gyro, accel, (newIMU-lastIMU)*0.000001);
+  lastIMU = newIMU;
+
+  if (DEBUG) {
+    Serial.print("PITCH: ");
+    Serial.println(getPitch());
+    Serial.print("ROLL:");
+    Serial.println(getRoll());
+  }
+
+  // Adjust servo position
+  pitchServo.write(limits(PITCH_GIMBAL_GAIN*(ori[0]-getPitch())+pitchServo.read(), PITCH_SERVO_LOW, PITCH_SERVO_HIGH));
+  rollServo.write(limits(ROLL_GIMBAL_GAIN*(ori[1]-getRoll())+rollServo.read(), ROLL_SERVO_LOW, ROLL_SERVO_HIGH));
 }
 
+// Responds to the command provided by the wireless module.
 void handleCommand (char command, char* buffer) {
   int index = 0;
   
@@ -143,7 +213,7 @@ void handleCommand (char command, char* buffer) {
     // Read all the pixels
     amg.readPixels(pixels);
 
-    memcpy(buffer, pixels, AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float));
+    memcpy(buffer+index, pixels, AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float));
 
     index += AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float);
   }
@@ -151,28 +221,34 @@ void handleCommand (char command, char* buffer) {
   // HC-SR04
   if (0b01000000 & command) {
     // Get distance
-    // TODO get this to work
+
+    // Not implemented due to issues with interface
 
     index += sizeof(float);
   }
 
   // LSM6DS3TR-C
   if (0b00100000 & command) {
-    // Get a new normalized sensor event
+    // Get a new sensor event
     sensors_event_t accel;
     sensors_event_t gyro;
     sensors_event_t temp;
     lsm6ds3trc.getEvent(&accel, &gyro, &temp);
+    unsigned long newIMU = micros();
+    updateFilters(gyro, accel, (newIMU-lastIMU)*0.000001);
+    lastIMU = newIMU;
 
-    // TODO Get information from gyro memcpy(buffer, , 2*sizeof(float));
-
-    index += 2*sizeof(float);
+    // Copy to buffer
+    float val = getPitch();
+    memcpy(buffer+index, &val, sizeof(float));
+    index += sizeof(float);
+    val = getRoll();
+    memcpy(buffer+index, &val, sizeof(float));
+    index += sizeof(float);
   }
   
   // Create status byte (status and battery measurement not implement yet)
 
   // TODO Implement stability assessment
-  // TODO implement
-  buffer[index] = 0;
-  
+  buffer[index] = measureBattery() << 4;
 }
