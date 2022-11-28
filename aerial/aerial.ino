@@ -6,7 +6,7 @@
 #include <Adafruit_LSM6DS3TRC.h>
 #include <Servo.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 bool status;
 
@@ -31,8 +31,13 @@ char command = 0x00; // Command from ground station
 Servo pitchServo; //0-90deg
 Servo rollServo; // 0-115deg
 
+#if DEBUG
 #define PITCH_GIMBAL_GAIN 0.1
 #define ROLL_GIMBAL_GAIN 0.1
+#else
+#define PITCH_GIMBAL_GAIN 0.08
+#define ROLL_GIMBAL_GAIN 0.05
+#endif
 
 #define PITCH_SERVO_LOW 0
 #define PITCH_SERVO_HIGH 90
@@ -64,7 +69,7 @@ int getResponseSize(char command) {
   if (0b00100000 & command) {
     length += 2*sizeof(float);
   }
-  //return 1 + (0b10000000 & command != 0)*AMG88xx_PIXEL_ARRAY_SIZE*sizeof(float) + (0b01000000 & command != 0)*sizeof(float) + (0b00100000 & command != 0)*2*sizeof(float);
+  
   return length;
 }
 
@@ -73,24 +78,24 @@ char measureBattery() {
 }
 
 void setup() {
-  if (DEBUG) {
-    Serial.begin(115200);
-    while (!Serial); // some boards need to wait to ensure access to serial over USB
-  }
+  #if DEBUG
+  Serial.begin(115200);
+  while (!Serial); // some boards need to wait to ensure access to serial over USB
+  #endif
 
   status = amg.begin();
   if (!status) {
-    if (DEBUG) {
-      Serial.println("Failed to find a valid AMG8833.");
-    }
+    #if DEBUG
+    Serial.println("Failed to find a valid AMG8833.");
+    #endif
     while (1);
   }
 
   status = lsm6ds3trc.begin_I2C();
   if (!status) {
-    if (DEBUG) {
-      Serial.println("Failed to find a valid LSM6DS3TR-C.");
-    }
+    #if DEBUG
+    Serial.println("Failed to find a valid LSM6DS3TR-C.");
+    #endif
     while (1);
   }
 
@@ -111,9 +116,9 @@ void setup() {
   // Initialize the transceiver on the SPI bus
   status = radio.begin();
   if (!status) {
-    if (DEBUG) {
-      Serial.println(F("Failed to find a valid nRF24L01+."));
-    }
+    #if DEBUG
+    Serial.println(F("Failed to find a valid nRF24L01+."));
+    #endif
     while (1);
   }
 
@@ -139,10 +144,10 @@ void loop() {
   if (radio.available()) {
     radio.read(&command, 1); // read command byte
 
-    if (DEBUG) {
-      Serial.print(F("Received: "));
-      Serial.println((byte)command);  // print the payload's value
-    }
+    #if DEBUG
+    Serial.print(F("Received: "));
+    Serial.println((byte)command);  // print the payload's value
+    #endif
 
     // SORI bit set
     // Recieve the remaining orientation information
@@ -160,25 +165,27 @@ void loop() {
     radio.openWritingPipe(address[1]);
     radio.writeBlocking(r_buf, length, 500); // Load buffers for up to 0.5s
     radio.txStandBy(500); // Retry transmission for up to 0.5s or ACK received
-    if (DEBUG) {
-      if (status) {
-        Serial.print("Handled command with output length: ");
-        Serial.println(length);  // print payload sent
-      }
-      else
-        Serial.println(F("Transmission failed or timed out"));  // payload was not delivered
+    #if DEBUG
+    if (status) {
+      Serial.print("Handled command with output length: ");
+      Serial.println(length);  // print payload sent
     }
+    else
+      Serial.println(F("Transmission failed or timed out"));  // payload was not delivered
+    #endif
 
     radio.startListening();
   }
 
-  if (DEBUG && !radio.available()) {
+  #if DEBUG
+  if (!radio.available()) {
     int length = getResponseSize(0b11100000);
     char r_buf[length];
     handleCommand(0b11100000, r_buf);
     Serial.print("Handled command with output length: ");
     Serial.println(length);
   }
+  #endif
 
   // Gimbaling
 
@@ -192,12 +199,12 @@ void loop() {
   updateFilters(gyro, accel, (newIMU-lastIMU)*0.000001);
   lastIMU = newIMU;
 
-  if (DEBUG) {
-    Serial.print("PITCH: ");
-    Serial.println(getPitch());
-    Serial.print("ROLL:");
-    Serial.println(getRoll());
-  }
+  #if DEBUG
+  Serial.print("PITCH: ");
+  Serial.println(getPitch());
+  Serial.print("ROLL:");
+  Serial.println(getRoll());
+  #endif
 
   // Adjust servo position
   pitchServo.write(limits(PITCH_GIMBAL_GAIN*(ori[0]-getPitch())+pitchServo.read(), PITCH_SERVO_LOW, PITCH_SERVO_HIGH));
