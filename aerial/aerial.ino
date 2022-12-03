@@ -6,7 +6,7 @@
 #include <Adafruit_LSM6DS3TRC.h>
 #include <Servo.h>
 
-#define DEBUG 0
+#define DEBUG 1
 
 bool status;
 
@@ -169,6 +169,7 @@ void loop() {
     if (status) {
       Serial.print("Handled command with output length: ");
       Serial.println(length);  // print payload sent
+      Serial.println(r_buf);
     }
     else
       Serial.println(F("Transmission failed or timed out"));  // payload was not delivered
@@ -178,13 +179,13 @@ void loop() {
   }
 
   #if DEBUG
-  if (!radio.available()) {
-    int length = getResponseSize(0b11100000);
-    char r_buf[length];
-    handleCommand(0b11100000, r_buf);
-    Serial.print("Handled command with output length: ");
-    Serial.println(length);
-  }
+  //if (!radio.available()) {
+    //int length = getResponseSize(0b11100000);
+    //char r_buf[length];
+    //handleCommand(0b11100000, r_buf);
+    //Serial.print("Handled command with output length: ");
+    //Serial.println(length);
+  //}
   #endif
 
   // Gimbaling
@@ -195,15 +196,15 @@ void loop() {
   sensors_event_t temp;
   lsm6ds3trc.getEvent(&accel, &gyro, &temp);
   unsigned long newIMU = micros();
-  Serial.println(newIMU-lastIMU);
+  //Serial.println(newIMU-lastIMU);
   updateFilters(gyro, accel, (newIMU-lastIMU)*0.000001);
   lastIMU = newIMU;
 
   #if DEBUG
-  Serial.print("PITCH: ");
-  Serial.println(getPitch());
-  Serial.print("ROLL:");
-  Serial.println(getRoll());
+  //Serial.print("PITCH: ");
+  //Serial.println(getPitch());
+  //Serial.print("ROLL:");
+  //Serial.println(getRoll());
   #endif
 
   // Adjust servo position

@@ -6,8 +6,6 @@
 RF24 radio(4, 5);  // using GPIO4 for the CE pin, and GPIO5 for the CSN pin. Note these are different than the pins labelled on the NodeMCU module
 
 uint8_t address[][6] = { "GCONT", "ADATA" };
-bool role = false;  // true = TX role, false = RX role
-float payload = 0.0;
 
 int getResponseSize(char command) {
   // status byte + amg8833 + hc sr-04 + lsm6ds3tr-c
