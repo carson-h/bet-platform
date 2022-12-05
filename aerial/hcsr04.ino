@@ -3,26 +3,26 @@
 #include <Wire.h>
 
 #define HC_SR04_DEFAULT_ADDRESS 0x2B
-#define PULSE_TO_DIST 0
+#define PULSE_TO_DIST 0.0
 
 void initialize() {
-    Wire.begin();
+  Wire.begin();
 }
 
 float pulse_to_dist (short pulses) {
-    return pulses*PULSE_TO_DIST;
+  return ((float)pulses) * PULSE_TO_DIST;
 }
 
 short request(int address) {
-    Wire.setClock(100000);
-    Wire.requestFrom(address, 2, true);
+  Wire.setClock(100000);
+  Wire.requestFrom(address, 2, true);
 
-    short pulses = Wire.read() << 8;
-    pulses += Wire.read();
+  short pulses = Wire.read() << 8;
+  pulses += Wire.read();
 
-    return pulses;
+  return pulses;
 }
 
 float requestDistance(int address = HC_SR04_DEFAULT_ADDRESS) {
-    return pulse_to_dist(request(address));
+  return pulse_to_dist(request(address));
 }

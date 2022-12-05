@@ -2,6 +2,8 @@
 #include "RF24.h"
 #include <Adafruit_AMG88xx.h> // For array size constant
 
+#define DEBUG 1
+#define RETRANS_LIMIT 50
 
 RF24 radio(4, 5);  // using GPIO4 for the CE pin, and GPIO5 for the CSN pin. Note these are different than the pins labelled on the NodeMCU module
 
@@ -27,7 +29,7 @@ int getResponseSize(char command) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200, SERIAL_8O1);
   while (!Serial);
 
   // Initialize nRF24
@@ -36,48 +38,89 @@ void setup() {
     while (1); // hold
   }
 
-  
-  // role variable is hardcoded to RX behavior, inform the user of this
-  Serial.println(F("*** PRESS 'T' to begin transmitting to the other node"));
-
-  // save on transmission time by setting the radio to only transmit the
-  // number of bytes we need to transmit a float
   radio.enableDynamicPayloads();
 
   // set the TX address of the RX node into the TX pipe
-  radio.openWritingPipe(address[0]);  // always uses pipe 0
+  radio.openWritingPipe(address[0]);
 
   // set the RX address of the TX node into a RX pipe
-  radio.openReadingPipe(1, address[1]);  // using pipe 1
+  radio.openReadingPipe(1, address[1]);
 
-  // additional setup specific to the node's role
   radio.stopListening();
 }
 
+char command;
+char ori[2*sizeof(float)];
+int length;
+
 void loop() {
   if (Serial.available()) {
-    char command;
-    Serial.readBytes(&command, 1);
+    command = Serial.read();
+    #if DEBUG
+    Serial.print("Got command: ");
+    Serial.println((int)command);
+    #endif
+    radio.stopListening();
     
-    radio.writeBlocking(&command, 1, 500);
-    radio.txStandBy(500);
-    
-    char ori[2*sizeof(float)];
-    if (0b00010000 & command) {
-      Serial.readBytes(ori, 2*sizeof(float));
+    bool success;
+    int attempts = 0;
+    do {
+      #if DEBUG
+      Serial.println("attempting transmission");
+      #endif
+      success = radio.write(&command, 1);
+      attempts += 1;
+    } while (!success && attempts < RETRANS_LIMIT);
+    //radio.writeBlocking(&command, 1, 500);
+    //radio.txStandBy(500);
+
+    if (!success) {
+      #if DEBUG
+      Serial.println("Giving up");
+      #endif
     }
+    else {
+      #if DEBUG
+      Serial.println("Sent command");
+      #endif
+      
+      if (0b00010000 & command) {
+        Serial.readBytes(ori, 2*sizeof(float));
 
-    radio.writeBlocking(ori, 2*sizeof(float), 500);
-    radio.txStandBy(500);
+        radio.writeBlocking(ori, 2*sizeof(float), 500);
+        radio.txStandBy(500);
+        #if DEBUG
+        Serial.println("sent orientation");
+        #endif
+      }
 
-    radio.startListening();
+      radio.startListening();
 
-    int length = getResponseSize(command);
-    char buffer[length];
+      length = getResponseSize(command);
+      char buffer[length];
 
-    radio.read(buffer, length);
+      #if DEBUG
+      Serial.println("waiting for response");
+      #endif
 
-    Serial.write(buffer, length);
+      for (int i = 0; i < length; i += 32)
+        radio.read(buffer+i, min(length-i, 32));
+
+      #if DEBUG
+      Serial.print("expecting length: ");
+      Serial.println(length);
+      Serial.print("got response: ");
+      for (int i = 0; i + 3 < length; i = i + sizeof(float)) {
+        Serial.print(*(float*)(buffer + i * sizeof(float)));
+        Serial.print(" ");
+      }
+      Serial.println("");
+      #else
+      Serial.write(buffer, length);
+      #endif
+    }
+    radio.flush_rx();
+    radio.flush_tx();
   }
   delay(15);
 }

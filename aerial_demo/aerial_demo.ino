@@ -1,6 +1,5 @@
 #include <SPI.h>
 #include "printf.h"
-#include "RF24.h"
 #include <Wire.h>
 #include <Adafruit_AMG88xx.h>
 #include <Adafruit_LSM6DS3TRC.h>
@@ -22,10 +21,6 @@ Adafruit_LSM6DS3TRC lsm6ds3trc;
 float ori[] = {0.0, 0.0}; // Orientation set point
 unsigned long lastIMU;
 
-// Radio
-RF24 radio(7, 8);  // using pin 7 for the CE pin, and pin 8 for the CSN pin
-
-uint8_t address[][6] = { "GCONT", "ADATA" };
 char command = 0x00; // Command from ground station
 
 // Gimbal Control
@@ -79,26 +74,16 @@ char measureBattery() {
 }
 
 void setup() {
-  #if DEBUG
   Serial.begin(115200, SERIAL_8O1);
   while (!Serial); // some boards need to wait to ensure access to serial over USB
-  #endif
-
+  
   status = amg.begin();
-  if (!status) {
-    #if DEBUG
-    Serial.println("Failed to find a valid AMG8833.");
-    #endif
+  if (!status)
     while (1);
-  }
 
   status = lsm6ds3trc.begin_I2C();
-  if (!status) {
-    #if DEBUG
-    Serial.println("Failed to find a valid LSM6DS3TR-C.");
-    #endif
+  if (!status)
     while (1);
-  }
 
   // Configure accelerometer and gyroscope
   lsm6ds3trc.setAccelRange(LSM6DS_ACCEL_RANGE_2_G);
@@ -114,104 +99,29 @@ void setup() {
   initFilters();
   lastIMU = micros();
 
-  // Initialize the transceiver on the SPI bus
-  status = radio.begin();
-  if (!status) {
-    #if DEBUG
-    Serial.println(F("Failed to find a valid nRF24L01+."));
-    #endif
-    while (1);
-  }
-
-  // TODO Determine if the radio power parameter needs changed on these devices. (Configurable for debug mode?)
-  // Set the PA Level low to try preventing power supply related problems
-  // because these examples are likely run with nodes in close proximity to
-  // each other.
-  radio.setPALevel(RF24_PA_LOW);  // RF24_PA_MAX is default.
-
-  // TODO Fixed payload size? Is variable width possible? What is the most effective width?
-  // save on transmission time by setting the radio to only transmit the
-  // number of bytes we need to transmit a float
-  radio.enableDynamicPayloads();
-  radio.openReadingPipe(1, address[0]); // set the RX address of the TX node into a RX pipe
-  radio.startListening();
-
   pitchServo.attach(5);
   rollServo.attach(6);
-
-  #if DEBUG
-  Serial.println("init complete.");
-  #endif
 }
 
 void loop() {
   // Get command message
-  if (radio.available()) {
-    radio.read(&command, 1); // read command byte
-
-    #if DEBUG
-    Serial.print(F("Received: "));
-    Serial.println((byte)command);  // print the payload's value
-    #endif
+  if (Serial.available()) {
+    command = Serial.read();
 
     // SORI bit set
     // Recieve the remaining orientation information
     if (0b00010000 & command) {
-      while (!radio.available() && radio.getPayloadSize()); // Wait until information is available
-      radio.read(ori, 2*sizeof(float)); // Read orientation
+      while (Serial.available() < 2)
+      ori[0] = Serial.read();
+      ori[1] = Serial.read();
     }
-
-    radio.stopListening();
 
     int length = getResponseSize(command);
     char r_buf[length];
     handleCommand(command, r_buf);
 
-    radio.openWritingPipe(address[1]);
-    bool success;
-    int attempts;
-    for (int i = 0; i < length; i += 32) {
-      attempts = 0;
-      do {
-        success = radio.write(r_buf+i, min(length-i, 32));
-      } while (!success & attempts < RETRANS_LIMIT);
-
-    }
-    //radio.writeBlocking(r_buf, length, 500); // Load buffers for up to 0.5s
-    //radio.txStandBy(500); // Retry transmission for up to 0.5s or ACK received
-    #if DEBUG
-    if (status) {
-      Serial.print("Handled command with output length: ");
-      Serial.println(length);  // print payload sent
-      Serial.write(r_buf, length);
-      Serial.println();
-    }
-    else
-      Serial.println(F("Transmission failed or timed out"));  // payload was not delivered
-    #endif
-
-
-  
-    radio.flush_rx();
-    radio.flush_tx();
-
-    radio.openReadingPipe(1, address[0]); // set the RX address of the TX node into a RX pipe
-    radio.startListening();
+    Serial.write(r_buf, length);
   }
-  #if DEBUG
-  //else
-    //Serial.print(".");
-  #endif
-
-  #if DEBUG
-  //if (!radio.available()) {
-    //int length = getResponseSize(0b11100000);
-    //char r_buf[length];
-    //handleCommand(0b11100000, r_buf);
-    //Serial.print("Handled command with output length: ");
-    //Serial.println(length);
-  //}
-  #endif
 
   // Gimbaling
 
@@ -224,13 +134,6 @@ void loop() {
   //Serial.println(newIMU-lastIMU);
   updateFilters(gyro, accel, (newIMU-lastIMU)*0.000001);
   lastIMU = newIMU;
-
-  #if DEBUG
-  // Serial.print("PITCH: ");
-  // Serial.println(getPitch());
-  // Serial.print("ROLL:");
-  // Serial.println(getRoll());
-  #endif
 
   // Adjust servo position
   #if !DEBUG
@@ -259,11 +162,7 @@ void handleCommand (char command, char* buffer) {
 
     // Not implemented due to issues with interface
     float distance = 0.0;
-    #if DEBUG
-    Serial.print("Distance: ");
-    Serial.println(distance);
-    #endif
-    memcpy(buffer+index, &distance, sizeof(float));    
+    memcpy(buffer+index, &distance, sizeof(float));
 
     index += sizeof(float);
   }
@@ -282,19 +181,9 @@ void handleCommand (char command, char* buffer) {
     // Copy to buffer
     float val = getPitch();
     memcpy(buffer+index, &val, sizeof(float));
-    #if DEBUG
-    Serial.print("Pitch: ");
-    Serial.println(val);
-    Serial.write(buffer+index, sizeof(float));
-    #endif
     index += sizeof(float);
     val = getRoll();
     memcpy(buffer+index, &val, sizeof(float));
-    #if DEBUG
-    Serial.print("Roll: ");
-    Serial.println(val);
-    Serial.write(buffer+index, sizeof(float));
-    #endif
     index += sizeof(float);
   }
   
